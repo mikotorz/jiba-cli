@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Major Version</key><integer>1</integer>
+  <key>Minor Version</key><integer>1</integer>
+  <key>Application Version</key><string>12.0</string>
+  <key>Date</key><string>2026-05-27T12:00:00Z</string>
+  <key>Tracks</key>
+  <dict>
+    <key>100</key>
+    <dict>
+      <key>Track ID</key><integer>100</integer>
+      <key>Name</key><string>Rocket</string>
+      <key>Artist</key><string>YOASOBI</string>
+      <key>Album</key><string>THE BOOK</string>
+      <key>Album Artist</key><string>YOASOBI</string>
+      <key>Persistent ID</key><string>ABC123</string>
+      <key>Track Type</key><string>File</string>
+      <key>Location</key><string>file:///Users/test/Music/Music/Media/YOASOBI/Rocket.m4a</string>
+      <key>File Folder Count</key><integer>4</integer>
+      <key>Library Folder Count</key><integer>1</integer>
+    </dict>
+    <key>101</key>
+    <dict>
+      <key>Track ID</key><integer>101</integer>
+      <key>Name</key><string>アイドル</string>
+      <key>Artist</key><string>YOASOBI</string>
+      <key>Album</key><string>アイドル</string>
+      <key>Album Artist</key><string>YOASOBI</string>
+      <key>Persistent ID</key><string>DEF456</string>
+      <key>Track Type</key><string>File</string>
+      <key>Location</key><string>file:///Users/test/Music/Music/Media/YOASOBI/Idol.m4a</string>
+    </dict>
+    <key>102</key>
+    <dict>
+      <key>Track ID</key><integer>102</integer>
+      <key>Name</key><string>Love Me Right</string>
+      <key>Artist</key><string>EXO</string>
+      <key>Album</key><string>EXODUS</string>
+      <key>Album Artist</key><string>EXO</string>
+      <key>Persistent ID</key><string>GHI789</string>
+      <key>Track Type</key><string>Remote</string>
+    </dict>
+    <key>103</key>
+    <dict>
+      <key>Track ID</key><integer>103</integer>
+      <key>Name</key><string>いつか (Someday)</string>
+      <key>Artist</key><string>Mrs. GREEN APPLE</string>
+      <key>Album</key><string>Mrs. GREEN APPLE</string>
+      <key>Album Artist</key><string>Mrs. GREEN APPLE</string>
+      <key>Persistent ID</key><string>JKL012</string>
+      <key>Track Type</key><string>File</string>
+    </dict>
+  </dict>
+  <key>Playlists</key>
+  <array>
+    <dict>
+      <key>Name</key><string>Library</string>
+      <key>Playlist ID</key><integer>1</integer>
+      <key>Playlist Items</key>
+      <array>
+        <dict><key>Track ID</key><integer>100</integer></dict>
+        <dict><key>Track ID</key><integer>101</integer></dict>
+        <dict><key>Track ID</key><integer>102</integer></dict>
+        <dict><key>Track ID</key><integer>103</integer></dict>
+      </array>
+    </dict>
+  </array>
+</dict>
+</plist>
