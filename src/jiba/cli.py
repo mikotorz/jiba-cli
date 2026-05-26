@@ -10,7 +10,7 @@ from rich.panel import Panel
 from rich import print as rprint
 
 from .library import read_library, get_default_library_path, backup_file
-from .models import ScanResult, Correction
+from .models import ScanResult, Correction, Classification
 from .detector import analyze_title
 
 console = Console()
@@ -80,7 +80,7 @@ def scan(library_path, dry_run, auto_write, target_languages, output, verbose, m
         for t in tracks:
             result = analyze_title(t.name, t.artist)
             classifications[t.track_id] = result
-            if result.has_cjk:
+            if result.classification == Classification.ORIGINAL:
                 cjk_count += 1
             if result.is_romanized_candidate:
                 romanized_count += 1
@@ -91,7 +91,7 @@ def scan(library_path, dry_run, auto_write, target_languages, output, verbose, m
     stats_table.add_column("Metric", style="cyan")
     stats_table.add_column("Count", style="bold")
     stats_table.add_row("Total tracks", str(len(tracks)))
-    stats_table.add_row("Already in original script (CJK/Kana/Hangul)", str(cjk_count))
+    stats_table.add_row("Already in original script", str(cjk_count))
     stats_table.add_row("Potentially romanized/translated", str(romanized_count))
     stats_table.add_row("Skipped (unknown/non-target)", str(
         len(tracks) - cjk_count - romanized_count

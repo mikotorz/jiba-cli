@@ -239,6 +239,13 @@ def analyze_title(title: str, artist: str = "") -> AnalysisResult:
     artist_is_korean = _artist_suggests_korean(artist)
     artist_is_chinese = _artist_suggests_chinese(artist)
 
+    if artist_is_japanese:
+        detected_lang = "ja"
+    elif artist_is_korean:
+        detected_lang = "ko"
+    elif artist_is_chinese:
+        detected_lang = "zh"
+
     romaji_score = 0
 
     if artist_is_japanese:

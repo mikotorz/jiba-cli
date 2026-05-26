@@ -44,6 +44,7 @@ class MusicBrainzClient:
             "query": query,
             "fmt": "json",
             "limit": limit,
+            "inc": "aliases",
         }
         try:
             resp = self._client.get(
