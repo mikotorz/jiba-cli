@@ -41,8 +41,8 @@ def _resolve_library(library_path: str | None) -> Path:
 @cli.command()
 @click.option('--library-path', '-l', default=None,
               help='Path to iTunes Music Library.xml (auto-detects default)')
-@click.option('--dry-run', '-n', is_flag=True, default=True,
-              help='Scan only, do not write changes (default: on)')
+@click.option('--dry-run', '-n', is_flag=True, default=False,
+              help='Scan only, do not write changes')
 @click.option('--auto-write', '-w', is_flag=True, default=False,
               help='Write changes automatically without review')
 @click.option('--target-languages', '-t', default='ja,zh,ko',

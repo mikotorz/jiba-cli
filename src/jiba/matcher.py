@@ -203,14 +203,14 @@ class iTunesClient:
                     collection = result.get("collectionName", "")
                     has_script_collection = any(ord(c) > 127 for c in (collection or ""))
 
-                    if has_script or has_script_collection:
+                    if has_script:
                         return Correction(
                             track_id=0,
                             field="name",
                             original_value=title,
-                            corrected_value=track_name if has_script else collection,
+                            corrected_value=track_name,
                             source=f"itunes_{country.lower()}",
-                            confidence=0.6 if has_script else 0.4,
+                            confidence=0.6,
                         )
 
         return None

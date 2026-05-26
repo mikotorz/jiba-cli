@@ -65,7 +65,7 @@ class TestAnalyzeTitle:
         result = analyze_title("봄날", "BTS")
         assert result.classification == Classification.ORIGINAL
         assert result.language == "ko"
-        assert result.has_cjk is True
+        assert result.has_cjk is False
 
     def test_chinese_title(self):
         """Track with significant CJK should be ORIGINAL Chinese."""

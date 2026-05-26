@@ -1,5 +1,6 @@
 """Orchestrates metadata matching across multiple sources."""
 import json
+import warnings
 from pathlib import Path
 from typing import Optional
 
@@ -56,8 +57,8 @@ def match_tracks(
             if mb_client and not correction:
                 try:
                     correction = mb_client.find_original_title(track.artist, track.name)
-                except Exception:
-                    pass
+                except Exception as e:
+                    warnings.warn(f"MusicBrainz lookup failed for {track.artist} - {track.name}: {e}")
 
             # Fall back to iTunes API
             if it_client and not correction:
@@ -65,8 +66,8 @@ def match_tracks(
                     correction = it_client.find_original_title(
                         track.artist, track.name, target_langs
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    warnings.warn(f"iTunes lookup failed for {track.artist} - {track.name}: {e}")
 
             if correction:
                 correction.track_id = track.track_id
@@ -109,12 +110,12 @@ def load_corrections(path: Path) -> list[Correction]:
         data = json.load(f)
     return [
         Correction(
-            track_id=item["track_id"],
-            field=item["field"],
-            original_value=item["original_value"],
-            corrected_value=item["corrected_value"],
-            source=item["source"],
-            confidence=item["confidence"],
+            track_id=item.get("track_id", 0),
+            field=item.get("field", ""),
+            original_value=item.get("original_value", ""),
+            corrected_value=item.get("corrected_value", ""),
+            source=item.get("source", ""),
+            confidence=item.get("confidence", 0.0),
         )
         for item in data
     ]

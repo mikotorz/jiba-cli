@@ -146,6 +146,8 @@ def _artist_suggests_korean(artist: str) -> bool:
 def _artist_suggests_chinese(artist: str) -> bool:
     """Check if artist name suggests Chinese music."""
     artist_lower = artist.lower().strip()
+    if _artist_suggests_japanese(artist):
+        return False
     if has_cjk(artist) and not has_kana(artist):
         return True
     return any(indicator in artist_lower for indicator in CHINESE_ARTIST_INDICATORS)
@@ -170,7 +172,6 @@ def analyze_title(title: str, artist: str = "") -> AnalysisResult:
     title = title or ""
     artist = artist or ""
 
-    has_cjk_chars = has_cjk(title)
     has_kana_chars = has_kana(title)
     has_hangul_chars = has_hangul(title)
     has_thai_chars = has_thai(title)
@@ -183,9 +184,6 @@ def analyze_title(title: str, artist: str = "") -> AnalysisResult:
 
     # If title already has CJK characters (significant amount)
     cjk_ratio = sum(1 for c in title if _in_range(c, CJK_RANGES)) / max(len(title), 1)
-    kana_ratio = sum(1 for c in title if (
-        _in_range(c, HIRAGANA_RANGE) or _in_range(c, KATAKANA_RANGE)
-    )) / max(len(title), 1)
 
     if has_kana_chars:
         # Contains Japanese kana — clearly original Japanese
@@ -204,7 +202,7 @@ def analyze_title(title: str, artist: str = "") -> AnalysisResult:
             title=title, artist=artist,
             classification=Classification.ORIGINAL,
             language="ko", confidence=confidence,
-            has_cjk=True, is_romanized_candidate=False,
+            has_cjk=False, is_romanized_candidate=False,
         )
     elif has_thai_chars:
         detected_lang = "th"
@@ -242,27 +240,21 @@ def analyze_title(title: str, artist: str = "") -> AnalysisResult:
     artist_is_chinese = _artist_suggests_chinese(artist)
 
     romaji_score = 0
-    reasons = []
 
     if artist_is_japanese:
         romaji_score += 0.3
-        reasons.append("japanese_artist")
 
     if artist_is_korean:
         romaji_score += 0.2
-        reasons.append("korean_artist")
 
     if artist_is_chinese:
         romaji_score += 0.2
-        reasons.append("chinese_artist")
 
     if all_ascii and (artist_is_japanese or artist_is_korean or artist_is_chinese):
         romaji_score += 0.2
-        reasons.append("latin_title_with_asia_artist")
 
     if _has_romaji_patterns(title):
         romaji_score += 0.15
-        reasons.append("romaji_patterns")
 
     # Detect translated titles (English title from non-English artist)
     if all_ascii and (artist_is_japanese or artist_is_korean):
@@ -272,7 +264,6 @@ def analyze_title(title: str, artist: str = "") -> AnalysisResult:
             title_lang = langdetect_detect(title)
             if title_lang == 'en':
                 romaji_score += 0.15
-                reasons.append(f"detected_english")
         except Exception:
             pass
 
