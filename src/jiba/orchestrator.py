@@ -4,7 +4,7 @@ import warnings
 from pathlib import Path
 from typing import Optional
 
-from .models import Track, Correction, ScanResult, Classification
+from .models import Track, Correction
 from .detector import analyze_title
 from .matcher import MusicBrainzClient, iTunesClient
 
@@ -68,6 +68,77 @@ def match_tracks(
                     )
                 except Exception as e:
                     warnings.warn(f"iTunes lookup failed for {track.artist} - {track.name}: {e}")
+
+            if correction:
+                correction.track_id = track.track_id
+                corrections.append(correction)
+
+            if progress_callback:
+                progress_callback(i, total, track, correction)
+
+    finally:
+        if mb_client:
+            mb_client.close()
+        if it_client:
+            it_client.close()
+
+    # Sort by confidence (highest first)
+    corrections.sort(key=lambda c: c.confidence, reverse=True)
+    return corrections
+
+
+def reverse_tracks(
+    tracks: list[Track],
+    use_musicbrainz: bool = True,
+    use_itunes: bool = True,
+    progress_callback=None,
+) -> list[Correction]:
+    """Find original English titles for Japanized tracks.
+
+    Pipeline:
+    1. Detect if track is japanized (Japanese kana title by Western artist)
+    2. Search MusicBrainz for original English title (search by Japanese title)
+    3. Fall back to iTunes Store API (JP store → lookup US store)
+    4. Return list of corrections sorted by confidence
+
+    Args:
+        tracks: List of tracks to analyze.
+        use_musicbrainz: Whether to query MusicBrainz.
+        use_itunes: Whether to query iTunes Store API.
+        progress_callback: Optional callable for progress updates.
+
+    Returns:
+        List of Correction objects.
+    """
+    corrections: list[Correction] = []
+    mb_client = MusicBrainzClient() if use_musicbrainz else None
+    it_client = iTunesClient() if use_itunes else None
+    total = len(tracks)
+
+    try:
+        for i, track in enumerate(tracks):
+            # Check if this track is japanized
+            analysis = analyze_title(track.name, track.artist)
+            if not analysis.is_japanized_candidate:
+                if progress_callback:
+                    progress_callback(i, total, track, None)
+                continue
+
+            correction = None
+
+            # Try MusicBrainz first (higher accuracy)
+            if mb_client and not correction:
+                try:
+                    correction = mb_client.find_original_english_title(track.artist, track.name)
+                except Exception as e:
+                    warnings.warn(f"MusicBrainz reverse lookup failed for {track.artist} - {track.name}: {e}")
+
+            # Fall back to iTunes
+            if it_client and not correction:
+                try:
+                    correction = it_client.find_original_english_title(track.artist, track.name)
+                except Exception as e:
+                    warnings.warn(f"iTunes reverse lookup failed for {track.artist} - {track.name}: {e}")
 
             if correction:
                 correction.track_id = track.track_id

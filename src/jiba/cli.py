@@ -1,5 +1,4 @@
 """jiba-cli CLI entry point."""
-import json
 from pathlib import Path
 
 import click
@@ -7,10 +6,9 @@ from rich.console import Console
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 from rich.panel import Panel
-from rich import print as rprint
 
 from .library import read_library, get_default_library_path, backup_file
-from .models import ScanResult, Correction, Classification
+from .models import Correction, Classification
 from .detector import analyze_title
 
 console = Console()
@@ -280,6 +278,141 @@ def detect(title, artist):
         f"[bold]Language:[/] {result.language or 'unknown'}\n"
         f"[bold]Confidence:[/] {result.confidence:.0%}\n"
         f"[bold]Has CJK:[/] {'[green]Yes[/]' if result.has_cjk else '[red]No[/]'}\n"
-        f"[bold]Romanized:[/] {'[green]Yes[/]' if result.is_romanized_candidate else '[red]No[/]'}",
+        f"[bold]Romanized:[/] {'[green]Yes[/]' if result.is_romanized_candidate else '[red]No[/]'}\n"
+        f"[bold]Japanized:[/] {'[green]Yes[/]' if result.is_japanized_candidate else '[red]No[/]'}",
         title="Language Analysis"
     ))
+
+
+@cli.command()
+@click.option('--library-path', '-l', default=None,
+              help='Path to iTunes Music Library.xml (auto-detects default)')
+@click.option('--dry-run', '-n', is_flag=True, default=False,
+              help='Scan only, do not write changes')
+@click.option('--auto-write', '-w', is_flag=True, default=False,
+              help='Write changes automatically without review')
+@click.option('--output', '-o', default=None,
+              help='Output corrections JSON file path')
+@click.option('--verbose', '-v', is_flag=True, default=False,
+              help='Show detailed per-track analysis')
+@click.option('--match', '-m', is_flag=True, default=False,
+              help='Look up original English titles via MusicBrainz/iTunes')
+def reverse(library_path, dry_run, auto_write, output, verbose, match):
+    """Restore original (English) titles for Japanized tracks.
+
+    Apple Music sometimes auto-converts Western song titles to Japanese
+    (katakana/kanji). This command detects those tracks and restores
+    the original English names.
+    """
+    lib_path = _resolve_library(library_path)
+
+    with console.status("[bold green]Reading library...", spinner="dots"):
+        tracks = read_library(str(lib_path))
+
+    console.print(Panel(
+        f"[bold]Library:[/] {lib_path}\n"
+        f"[bold]Tracks:[/] {len(tracks)}\n"
+        f"[bold]Mode:[/] {'[yellow]reverse (JP→EN)[/]'}\n"
+        f"[bold]Write:[/] {'[yellow]dry-run[/]' if dry_run else '[green]live[/]'}",
+        title="jiba reverse"
+    ))
+
+    # Analyze all tracks
+    classifications = {}
+    total_original = 0
+    japanized_count = 0
+
+    with Progress() as progress:
+        task = progress.add_task("[cyan]Analyzing tracks...", total=len(tracks))
+        for t in tracks:
+            result = analyze_title(t.name, t.artist)
+            classifications[t.track_id] = result
+            if result.classification == Classification.ORIGINAL:
+                total_original += 1
+            if result.is_japanized_candidate:
+                japanized_count += 1
+            progress.update(task, advance=1)
+
+    # Summary table
+    stats_table = Table(title="Reverse Scan Summary")
+    stats_table.add_column("Metric", style="cyan")
+    stats_table.add_column("Count", style="bold")
+    stats_table.add_row("Total tracks", str(len(tracks)))
+    stats_table.add_row("Original script tracks", str(total_original))
+    stats_table.add_row("Japanized candidates (JP→EN needed)", str(japanized_count))
+    stats_table.add_row("Skipped (romanized/unknown)", str(
+        len(tracks) - total_original - japanized_count
+    ))
+    console.print(stats_table)
+
+    # Candidates table
+    japanized_tracks = [t for t in tracks if classifications[t.track_id].is_japanized_candidate]
+    if japanized_tracks:
+        detail_table = Table(title="Japanized Track Candidates")
+        detail_table.add_column("ID", style="dim", width=6)
+        detail_table.add_column("Title", style="yellow")
+        detail_table.add_column("Artist")
+        detail_table.add_column("Confidence")
+
+        for t in japanized_tracks:
+            r = classifications[t.track_id]
+            detail_table.add_row(
+                str(t.track_id),
+                t.name[:55],
+                t.artist[:40],
+                f"{r.confidence:.0%}"
+            )
+        console.print(detail_table)
+
+        if verbose:
+            for t in japanized_tracks:
+                r = classifications[t.track_id]
+                console.print(f"  [dim]#{t.track_id}[/] [yellow]{t.name}[/] by [cyan]{t.artist}[/]")
+
+    # Run reverse matching if requested
+    if match and japanized_tracks:
+        console.print("\n[bold]Looking up original English titles...[/]")
+        from .orchestrator import reverse_tracks, save_corrections
+
+        corrections = reverse_tracks(
+            japanized_tracks,
+            progress_callback=None,
+        )
+
+        if corrections:
+            match_table = Table(title=f"Found {len(corrections)} Reversed Corrections")
+            match_table.add_column("Track", style="yellow")
+            match_table.add_column("Japanized → Original")
+            match_table.add_column("Source")
+            match_table.add_column("Confidence")
+
+            track_map = {t.track_id: t for t in tracks}
+            for c in corrections:
+                track = track_map.get(c.track_id)
+                track_name = track.name if track else f"ID {c.track_id}"
+                match_table.add_row(
+                    track_name[:30],
+                    f"{c.original_value[:25]} → [green]{c.corrected_value[:25]}[/]",
+                    c.source,
+                    f"{c.confidence:.0%}"
+                )
+            console.print(match_table)
+
+            # Save to JSON if output specified
+            if output:
+                save_corrections(corrections, Path(output))
+                console.print(f"[green]✓[/] Corrections saved to [cyan]{output}[/]")
+
+            if not dry_run and auto_write:
+                console.print("[yellow]Auto-write not yet implemented. Use: jiba apply[/]")
+        else:
+            console.print("[yellow]No English titles found via MusicBrainz/iTunes.[/]")
+
+    elif not match and japanized_tracks:
+        console.print(
+            "\n[bold]Next:[/] Run [cyan]jiba reverse --match[/] "
+            "to look up original English titles via MusicBrainz/iTunes"
+        )
+
+    if not japanized_tracks:
+        console.print("[green]No Japanized tracks found — all clear![/]")

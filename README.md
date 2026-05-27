@@ -89,9 +89,46 @@ Analyze a single track title.
 ```bash
 jiba detect "Rocket" "YOASOBI"
 # → Classification: ROMANIZED
+
+jiba detect "シェイク・イット・オフ" "Taylor Swift"
+# → Classification: JAPANIZED
+```
+
+### `jiba reverse`
+
+Restore original English titles for tracks that Apple Music auto-converted to Japanese.
+
+Apple Music sometimes renders Western song titles in katakana (e.g. "Hotel California" → "ホテル・カリフォルニア"). This command detects those tracks by looking for Japanese kana/CJK titles from Western/Latin-script artists, then looks up the original English titles via MusicBrainz and the iTunes Store API.
+
+```bash
+# Scan library for Japanized tracks
+jiba reverse
+
+# Look up original English titles
+jiba reverse --match
+
+# Save corrections to JSON
+jiba reverse --match --output reverse-corrections.json
+
+# Apply the saved corrections
+jiba apply --corrections reverse-corrections.json
+```
+
+```
+Options:
+  -l, --library-path PATH    Path to iTunes Music Library.xml
+  -m, --match                Look up original English titles via MusicBrainz/iTunes
+  -o, --output FILE          Save corrections to JSON file
+  -n, --dry-run              Scan only (default: on)
+  -w, --auto-write           Write changes automatically
+  -v, --verbose              Detailed per-track analysis
 ```
 
 ## How It Works
+
+### Forward pipeline (jiba scan)
+
+Restores original Japanese/Chinese/Korean titles from romanized/translated names.
 
 ```
 ┌──────────────────────────────────────────────┐
@@ -108,6 +145,33 @@ jiba detect "Rocket" "YOASOBI"
 │                         CN/HK/TW storefronts) │
 │       ↓                                      │
 │  $ jiba apply corrections.json               │
+│       ↓                                      │
+│  Writer ──► Updated Library XML + .bak backup │
+└──────────────────────────────────────────────┘
+```
+
+### Reverse pipeline (jiba reverse)
+
+Restores original English titles from Japanized (Apple Music katakana) names.
+
+```
+┌──────────────────────────────────────────────┐
+│  $ jiba reverse --match                      │
+│       ↓                                      │
+│  iTunes Library XML ──► parser ──► tracks    │
+│       ↓                                      │
+│  Detector ──► Japanese kana/CJK title        │
+│               + Western/Latin artist          │
+│               → japanized candidate           │
+│       ↓                                      │
+│  MusicBrainz API ──► lookup Japanese title    │
+│                       → find Latin alias      │
+│  iTunes Store API ──► search JP store by      │
+│                        artist → trackId       │
+│                        → lookup US store      │
+│                        → English title        │
+│       ↓                                      │
+│  $ jiba apply reverse-corrections.json       │
 │       ↓                                      │
 │  Writer ──► Updated Library XML + .bak backup │
 └──────────────────────────────────────────────┘
@@ -138,24 +202,16 @@ jiba detect "Rocket" "YOASOBI"
 
 ## Project Structure
 
-```
-jiba-cli/
-├── pyproject.toml
-├── src/
-│   └── jiba/
-│       ├── cli.py           # CLI entry point (click + rich)
-│       ├── models.py        # Data models (Track, Correction, etc.)
-│       ├── library.py       # iTunes XML reader/writer + backup
-│       ├── detector.py      # Language/script detection
-│       ├── matcher.py       # MusicBrainz + iTunes API clients
-│       └── orchestrator.py  # Matching pipeline coordination
-└── tests/
-    ├── fixtures/
-    │   └── sample_library.xml
-    ├── test_library.py
-    ├── test_detector.py
-    └── test_matcher.py
-```
+| Tree               | File             | Purpose                        |
+|--------------------|------------------|--------------------------------|
+| `pyproject.toml`   |                  | Project config + dependencies  |
+| `src/jiba/`        | `cli.py`         | CLI entry point (click + rich) |
+|                    | `models.py`      | Data models (Track, Correction)|
+|                    | `library.py`     | iTunes XML reader/writer+backup|
+|                    | `detector.py`    | Language/script detection      |
+|                    | `matcher.py`     | MusicBrainz + iTunes API       |
+|                    | `orchestrator.py`| Matching pipeline coordination |
+| `tests/`           | `test_*.py`      | Unit tests                     |
 
 ## Development
 
@@ -179,6 +235,7 @@ pre-commit install
 - **iTunes XML format**: Apple Music for Windows still generates the XML, but some users report it doesn't auto-update when the library changes. May need manual export.
 - **Rate-limited**: MusicBrainz allows 1 req/sec. Large libraries (10k+ tracks) take time.
 - **Read-only detection**: The detector is heuristic — some genuine English titles by Japanese artists will be flagged (false positives).
+- **Reverse matching accuracy**: Restoring original English from Japanized titles depends on the iTunes Store having the same track with an English title. Some tracks may not have US store equivalents (e.g., Japan-exclusive releases that Apple Music auto-converted).
 
 ## Credits
 

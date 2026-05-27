@@ -8,6 +8,7 @@ class Classification(Enum):
     ORIGINAL = auto()     # Already in original script
     ROMANIZED = auto()    # Romanized (e.g., romaji)
     TRANSLATED = auto()   # Translated into another language
+    JAPANIZED = auto()    # Auto-converted TO Japanese by Apple Music
     UNKNOWN = auto()      # Can't determine
 
 
@@ -36,6 +37,7 @@ class AnalysisResult:
     confidence: float = 0.0
     has_cjk: bool = False
     is_romanized_candidate: bool = False
+    is_japanized_candidate: bool = False  # Japanese script title by Western artist
 
 
 @dataclass
