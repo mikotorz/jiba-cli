@@ -49,7 +49,7 @@ class TestAnalyzeTitle:
         result = analyze_title("アイドル", "YOASOBI")
         assert result.classification == Classification.ORIGINAL
         assert result.language == "ja"
-        assert result.has_cjk is True
+        assert result.has_cjk is False
         assert result.is_romanized_candidate is False
         assert result.confidence >= 0.9
 

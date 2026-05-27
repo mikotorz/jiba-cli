@@ -8,6 +8,9 @@ import unicodedata
 
 from .models import AnalysisResult, Classification
 
+from langdetect import DetectorFactory
+DetectorFactory.seed = 0
+
 
 # Unicode block ranges for CJK and related scripts
 CJK_RANGES = [
@@ -193,7 +196,7 @@ def analyze_title(title: str, artist: str = "") -> AnalysisResult:
             title=title, artist=artist,
             classification=Classification.ORIGINAL,
             language="ja", confidence=confidence,
-            has_cjk=True, is_romanized_candidate=False,
+            has_cjk=has_cjk(title), is_romanized_candidate=False,
         )
     elif has_hangul_chars:
         detected_lang = "ko"
