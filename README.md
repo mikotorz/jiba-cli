@@ -182,6 +182,7 @@ pre-commit install
 - **JiBA** — The original macOS app by [Konnyaku](https://hee.ink) that inspired this project.
 - **MusicBrainz** — Free, open music database providing metadata.
 - **iTunes Store API** — Apple's search API for localized metadata.
+- **Claude Code (Anthropic)** — AI-assisted code generation, review, and bug fixes integrated throughout this project.
 
 ## License
 
