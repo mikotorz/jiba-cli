@@ -2,6 +2,9 @@
 
 **Restore original language titles in Apple Music / iTunes libraries.**
 
+> **⚠️ AI-Generated Project Disclaimer**
+> This entire project was generated with assistance from AI (Claude Code by Anthropic). It is provided as-is, with no guarantees of correctness, security, or fitness for any purpose. Review the code, understand what it does, and use at your own risk. The author assumes no liability for any data loss, library corruption, or metadata issues arising from its use.
+
 A cross-platform CLI tool that detects romanized/translated track titles (Japanese, Chinese, Korean, Thai) and restores their original scripts. Inspired by the macOS app [JiBA](https://jiba.hee.ink/) (Japanese is Back Again) by Konnyaku.
 
 ## Why?
