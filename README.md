@@ -20,15 +20,16 @@ Inspired by [JiBA](https://jiba.hee.ink/) (Japanese is Back Again) by Konnyaku â
 
 ## Installation
 
-```bash
-pip install jiba-cli
-```
-
-Or with [uv](https://docs.astral.sh/uv/):
+jiba-cli is not published to PyPI yet. Install it directly from the source:
 
 ```bash
-uv tool install jiba-cli
+git clone https://github.com/mikotorz/jiba-cli
+cd jiba-cli
+uv venv
+uv pip install -e .
 ```
+
+After that the `jiba` command is available in your terminal (within the virtual environment).
 
 ---
 
