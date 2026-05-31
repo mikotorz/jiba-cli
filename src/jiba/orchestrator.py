@@ -1,4 +1,29 @@
-"""Orchestrates metadata matching across multiple sources."""
+"""
+Coordinates the full scan-and-match pipeline.
+
+This file is the glue between the detector (detector.py) and the API clients
+(matcher.py). When you run `jiba scan --match` or `jiba reverse --match`,
+the CLI calls the functions here to process all tracks in bulk.
+
+There are two main pipelines:
+
+  match_tracks()   — Forward direction: find original-script titles for tracks
+                     whose titles have been romanized or translated into English.
+                     e.g.  "Yoru ni Kakeru"  →  夜に駆ける
+
+  reverse_tracks() — Reverse direction: find original English titles for tracks
+                     that Apple Music auto-converted to Japanese.
+                     e.g.  シェイク・イット・オフ  →  "Shake It Off"
+
+Both pipelines follow the same pattern for each track:
+  1. Run the detector to decide if the track needs correction.
+  2. Try MusicBrainz first (more accurate).
+  3. Fall back to iTunes Store API if MusicBrainz finds nothing.
+  4. Collect all corrections and return them sorted by confidence.
+
+The save/load functions here let you write corrections to a JSON file so you
+can review them before applying with `jiba apply`.
+"""
 import json
 import warnings
 from pathlib import Path
@@ -16,23 +41,14 @@ def match_tracks(
     use_itunes: bool = True,
     progress_callback=None,
 ) -> list[Correction]:
-    """Find original-language titles for romanized/translated tracks.
+    """
+    For each track in the list, look up its original-language title.
 
-    Pipeline:
-    1. Detect if track needs correction (ROMANIZED or TRANSLATED)
-    2. Search MusicBrainz for original title
-    3. Fall back to iTunes Store API (CJK storefronts)
-    4. Return list of corrections sorted by confidence
+    Only processes tracks that the detector flags as romanized candidates.
+    Returns a list of Correction objects sorted by confidence (highest first).
 
-    Args:
-        tracks: List of tracks to analyze.
-        target_langs: Target language codes (e.g., ['ja', 'zh', 'ko']).
-        use_musicbrainz: Whether to query MusicBrainz.
-        use_itunes: Whether to query iTunes Store API.
-        progress_callback: Optional callable for progress updates.
-
-    Returns:
-        List of Correction objects.
+    progress_callback, if provided, is called after each track is processed.
+    It receives: (current_index, total_tracks, track, correction_or_None).
     """
     if target_langs is None:
         target_langs = ['ja', 'zh', 'ko']
@@ -44,7 +60,7 @@ def match_tracks(
 
     try:
         for i, track in enumerate(tracks):
-            # Check if this track needs correction
+            # Skip tracks the detector says don't need correction
             analysis = analyze_title(track.name, track.artist)
             if not analysis.is_romanized_candidate:
                 if progress_callback:
@@ -53,14 +69,14 @@ def match_tracks(
 
             correction = None
 
-            # Try MusicBrainz first (higher accuracy)
+            # Try MusicBrainz first (community database, higher accuracy)
             if mb_client and not correction:
                 try:
                     correction = mb_client.find_original_title(track.artist, track.name)
                 except Exception as e:
                     warnings.warn(f"MusicBrainz lookup failed for {track.artist} - {track.name}: {e}")
 
-            # Fall back to iTunes API
+            # Fall back to iTunes Store API (searches regional storefronts)
             if it_client and not correction:
                 try:
                     correction = it_client.find_original_title(
@@ -77,12 +93,12 @@ def match_tracks(
                 progress_callback(i, total, track, correction)
 
     finally:
+        # Always close the HTTP clients, even if an error occurred mid-scan
         if mb_client:
             mb_client.close()
         if it_client:
             it_client.close()
 
-    # Sort by confidence (highest first)
     corrections.sort(key=lambda c: c.confidence, reverse=True)
     return corrections
 
@@ -93,22 +109,12 @@ def reverse_tracks(
     use_itunes: bool = True,
     progress_callback=None,
 ) -> list[Correction]:
-    """Find original English titles for Japanized tracks.
+    """
+    For each track in the list, find the original English title that Apple Music
+    replaced with a Japanese one.
 
-    Pipeline:
-    1. Detect if track is japanized (Japanese kana title by Western artist)
-    2. Search MusicBrainz for original English title (search by Japanese title)
-    3. Fall back to iTunes Store API (JP store → lookup US store)
-    4. Return list of corrections sorted by confidence
-
-    Args:
-        tracks: List of tracks to analyze.
-        use_musicbrainz: Whether to query MusicBrainz.
-        use_itunes: Whether to query iTunes Store API.
-        progress_callback: Optional callable for progress updates.
-
-    Returns:
-        List of Correction objects.
+    Only processes tracks the detector flags as japanized candidates (Japanese-kana
+    title by a Western artist). Returns corrections sorted by confidence.
     """
     corrections: list[Correction] = []
     mb_client = MusicBrainzClient() if use_musicbrainz else None
@@ -117,7 +123,7 @@ def reverse_tracks(
 
     try:
         for i, track in enumerate(tracks):
-            # Check if this track is japanized
+            # Skip tracks that don't look japanized
             analysis = analyze_title(track.name, track.artist)
             if not analysis.is_japanized_candidate:
                 if progress_callback:
@@ -126,14 +132,14 @@ def reverse_tracks(
 
             correction = None
 
-            # Try MusicBrainz first (higher accuracy)
+            # Try MusicBrainz first
             if mb_client and not correction:
                 try:
                     correction = mb_client.find_original_english_title(track.artist, track.name)
                 except Exception as e:
                     warnings.warn(f"MusicBrainz reverse lookup failed for {track.artist} - {track.name}: {e}")
 
-            # Fall back to iTunes
+            # Fall back to iTunes two-step lookup (JP store → US store)
             if it_client and not correction:
                 try:
                     correction = it_client.find_original_english_title(track.artist, track.name)
@@ -153,13 +159,15 @@ def reverse_tracks(
         if it_client:
             it_client.close()
 
-    # Sort by confidence (highest first)
     corrections.sort(key=lambda c: c.confidence, reverse=True)
     return corrections
 
 
 def save_corrections(corrections: list[Correction], path: Path) -> None:
-    """Save corrections to a JSON file."""
+    """
+    Save a list of corrections to a JSON file so they can be reviewed
+    and applied later with `jiba apply`.
+    """
     data = [
         {
             "track_id": c.track_id,
@@ -176,7 +184,7 @@ def save_corrections(corrections: list[Correction], path: Path) -> None:
 
 
 def load_corrections(path: Path) -> list[Correction]:
-    """Load corrections from a JSON file."""
+    """Load a previously saved corrections JSON file and return the Correction objects."""
     with open(path, 'r', encoding='utf-8') as f:
         data = json.load(f)
     return [

@@ -1,4 +1,18 @@
-"""jiba-cli CLI entry point."""
+"""
+The command-line interface entry point.
+
+This file defines all the commands you can type at the terminal:
+  jiba scan     — detect romanized/translated tracks in your library
+  jiba apply    — write the corrections a scan found back to the library
+  jiba rollback — undo the last apply by restoring a backup
+  jiba reverse  — detect japanized tracks and look up the original English titles
+  jiba detect   — quick one-off test: classify a single title
+
+Built with Click (a library for building CLI tools) and Rich (for the colored
+tables and progress bars you see in the terminal). Each command is a Python
+function decorated with @cli.command() — that's how Click knows to expose it
+as a subcommand.
+"""
 from pathlib import Path
 
 import click

@@ -1,4 +1,18 @@
-"""Read and write iTunes Music Library XML files."""
+"""
+Read and write iTunes Music Library XML files.
+
+iTunes/Apple Music stores its library as an XML file in a format called
+"plist" (property list). This file contains all your tracks, playlists,
+and metadata in a structured text format that we can read and write with
+Python's built-in plistlib.
+
+This file is responsible for three things:
+  1. Finding the library file on disk (auto-detecting the default location
+     for Windows, macOS, and Linux).
+  2. Reading the library into a list of Track objects (one per song).
+  3. Writing changes back to the library, after creating a timestamped
+     backup so you can undo the change if something goes wrong.
+"""
 import plistlib
 import shutil
 from datetime import datetime
@@ -9,12 +23,13 @@ import platform
 from .models import Track
 
 
-# Well-known library paths per platform
+# Default locations where iTunes/Music.app stores the library XML on each platform.
+# We check these paths in order and use the first one that actually exists.
 DEFAULT_LIBRARY_PATHS = {
     'Windows': [
         Path.home() / 'Music' / 'iTunes' / 'iTunes Music Library.xml',
     ],
-    'Darwin': [
+    'Darwin': [  # macOS
         Path.home() / 'Music' / 'Music' / 'Music Library.xml',       # macOS 10.15+ Music.app
         Path.home() / 'Music' / 'iTunes' / 'iTunes Music Library.xml',  # Legacy iTunes
     ],
@@ -25,7 +40,12 @@ DEFAULT_LIBRARY_PATHS = {
 
 
 def get_default_library_path() -> Optional[Path]:
-    """Return the default iTunes Music Library.xml path for the current OS."""
+    """
+    Find the iTunes/Music library XML on this computer.
+
+    Checks the well-known default locations for Windows, macOS, and Linux.
+    Returns the path if found, or None if not found.
+    """
     system = platform.system()
     paths = DEFAULT_LIBRARY_PATHS.get(system, [])
     for p in paths:
@@ -36,17 +56,14 @@ def get_default_library_path() -> Optional[Path]:
 
 
 def read_library(path: Optional[str] = None) -> list[Track]:
-    """Parse an iTunes Music Library XML and return all tracks.
+    """
+    Parse an iTunes Music Library XML and return every track as a Track object.
 
-    Args:
-        path: Path to the library XML. If None, auto-detects.
+    If no path is given, tries to find the library automatically.
+    Each entry in the XML's 'Tracks' dictionary becomes one Track object.
 
-    Returns:
-        List of Track objects.
-
-    Raises:
-        FileNotFoundError: If library file can't be found.
-        ValueError: If file isn't a valid iTunes library XML.
+    Raises FileNotFoundError if the library file can't be located.
+    Raises ValueError if the file isn't a valid iTunes library XML.
     """
     if path:
         lib_path = Path(path).expanduser().resolve()
@@ -73,6 +90,7 @@ def read_library(path: Optional[str] = None) -> list[Track]:
     if not isinstance(tracks_dict, dict):
         raise ValueError("Library XML has no 'Tracks' key or it's not a dict")
 
+    # Convert each raw dictionary entry into a typed Track object
     tracks = []
     for track_id_str, track_dict in tracks_dict.items():
         try:
@@ -98,13 +116,12 @@ def read_library(path: Optional[str] = None) -> list[Track]:
 
 
 def backup_file(path: Path) -> Path:
-    """Create a timestamped backup of a file.
+    """
+    Create a timestamped copy of a file before modifying it.
 
-    Args:
-        path: Path to the file to back up.
-
-    Returns:
-        Path to the backup file.
+    For example, 'iTunes Music Library.xml' becomes
+    'iTunes Music Library_20240315_142500.bak.xml'.
+    Returns the path to the backup file.
     """
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     backup_path = path.with_name(f"{path.stem}_{timestamp}.bak{path.suffix}")
@@ -118,22 +135,21 @@ def write_library(
     template_path: Optional[Path] = None,
     backup: bool = True,
 ) -> None:
-    """Write tracks back to an iTunes Library XML, preserving original structure.
+    """
+    Write a list of Track objects back to an iTunes Library XML file.
 
-    If template_path is given, reads the original plist and updates only
-    the Tracks dictionary, preserving playlists and other metadata.
-    If backup is True and the output file already exists, creates a timestamped
-    backup before overwriting.
+    To avoid losing playlists and other settings, if template_path is given
+    we read the original XML first and only replace the 'Tracks' section,
+    leaving everything else (playlists, library version, etc.) intact.
 
-    Args:
-        tracks: List of tracks to write.
-        output_path: Path for the output XML.
-        template_path: Optional path to original XML for structure preservation.
-        backup: Whether to create a backup if the output file exists.
+    If backup=True and the output file already exists, a timestamped backup
+    is created before anything is overwritten.
     """
     if backup and output_path.exists():
         backup_file(output_path)
 
+    # Start from the original plist structure so we preserve playlists etc.,
+    # or create a minimal skeleton if no template was provided.
     if template_path:
         with open(template_path, 'rb') as f:
             plist = plistlib.load(f)
@@ -147,6 +163,7 @@ def write_library(
             'Playlists': [],
         }
 
+    # Rebuild the Tracks dictionary from our Track objects
     tracks_dict = {}
     for track in tracks:
         td = {

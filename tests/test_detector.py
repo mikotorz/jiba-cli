@@ -132,3 +132,23 @@ class TestAnalyzeTitle:
         """Artist name in CJK/kana suggests the title may be romanized."""
         result = analyze_title("Rocket", "米津玄師")
         assert result.is_romanized_candidate is True
+
+    def test_japanized_western_artist(self):
+        """Kana title by a known Western artist should be JAPANIZED (Apple Music auto-converted it)."""
+        result = analyze_title("シェイク・イット・オフ", "Taylor Swift")
+        assert result.classification == Classification.JAPANIZED
+        assert result.is_japanized_candidate is True
+        assert result.confidence >= 0.8
+
+    def test_japanized_generic_latin_artist(self):
+        """Kana title by any Latin-script artist not in Asian artist lists should be JAPANIZED."""
+        result = analyze_title("ラヴ・ストーリー", "Maroon 5")
+        assert result.classification == Classification.JAPANIZED
+        assert result.is_japanized_candidate is True
+
+    def test_kana_no_artist_returns_unknown(self):
+        """Kana title with no artist info — can't tell if genuine or japanized."""
+        result = analyze_title("カタカナ", "")
+        assert result.classification == Classification.UNKNOWN
+        assert result.is_japanized_candidate is False
+        assert result.is_romanized_candidate is False

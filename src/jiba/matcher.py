@@ -1,4 +1,26 @@
-"""Music metadata matching via MusicBrainz and iTunes Store APIs."""
+"""
+Music metadata lookup via MusicBrainz and the iTunes Store API.
+
+Once the detector (detector.py) has flagged a track as romanized or japanized,
+this file is responsible for finding the correct original-language title.
+
+Two data sources are used:
+
+  MusicBrainzClient — queries MusicBrainz (musicbrainz.org), a free, community-
+      maintained music encyclopedia. It often stores multiple versions of a title
+      (original script + romanized aliases), which makes it ideal for this purpose.
+      MusicBrainz requires at most 1 request per second, so we enforce that limit.
+
+  iTunesClient — queries the iTunes Store search API. By searching the Japanese (JP),
+      Korean (KR), or Chinese (CN/HK/TW) storefronts, we can retrieve the
+      original-language titles that Apple Music shows in those regions.
+      For the reverse direction (japanized → English), we do a two-step lookup:
+        Step 1: Search the JP store for the artist to find the track and its ID.
+        Step 2: Look up that same track ID in the US store to get the English title.
+
+Both clients return a Correction object (defined in models.py) when they find
+a better title, or None if they come up empty.
+"""
 import json
 import time
 import unicodedata
@@ -10,31 +32,47 @@ from .models import Track, Correction
 
 
 def is_ascii_or_latin(text: str) -> bool:
-    """Check if text is primarily ASCII or Latin characters (not CJK/kana)."""
+    """
+    Return True if the text is written entirely in the Latin alphabet.
+
+    "Latin" here includes plain ASCII (A–Z) plus accented characters like
+    é, ü, ñ — but NOT Japanese, Korean, or Chinese characters.
+    This is used to check whether a title is in English/European script.
+    """
     if not text:
         return False
     non_ascii = [c for c in text if ord(c) > 127]
     if not non_ascii:
         return True  # Pure ASCII
-    # Check if non-ASCII chars are extended Latin (accents, etc.) not CJK
+    # Check if the non-ASCII characters are extended Latin (accents, etc.) not CJK
     for c in non_ascii:
         cp = ord(c)
-        # Latin-1 Supplement, Latin Extended-A/B, IPA Extensions
+        # Latin-1 Supplement, Latin Extended-A/B — the blocks that cover accented
+        # European letters. Characters outside these blocks (e.g. kanji) are excluded.
         in_latin = (0x00C0 <= cp <= 0x024F) or cp == 0x00D7 or cp == 0x00F7
         if not in_latin:
             return False
     return True
 
 
+# Identifies this tool to external APIs (good practice; MusicBrainz requires it)
 USER_AGENT = "jiba-cli/0.1.0 (https://github.com/mikotorz/jiba-cli)"
 
 
 class MusicBrainzClient:
-    """Client for the MusicBrainz API (free, open music database)."""
+    """
+    Queries the MusicBrainz open music database for original-language titles.
+
+    MusicBrainz (musicbrainz.org) is a free, community-maintained encyclopedia
+    of music metadata. It often stores a song under its original-script title AND
+    keeps romanized versions as "aliases", which makes it very useful for this tool.
+
+    Usage limit: MusicBrainz allows at most 1 request per second. We enforce this
+    automatically with the _rate_limit() method.
+    """
 
     BASE_URL = "https://musicbrainz.org/ws/2"
-    # Rate limit: 1 request per second
-    MIN_INTERVAL = 1.0
+    MIN_INTERVAL = 1.0  # Seconds to wait between requests (MusicBrainz policy)
 
     def __init__(self):
         self._client = httpx.Client(headers={
@@ -44,17 +82,18 @@ class MusicBrainzClient:
         self._last_request = 0.0
 
     def _rate_limit(self):
-        """Ensure at least 1 second between requests (MusicBrainz policy)."""
+        """Wait if needed so we don't send requests faster than once per second."""
         elapsed = time.time() - self._last_request
         if elapsed < self.MIN_INTERVAL:
             time.sleep(self.MIN_INTERVAL - elapsed)
         self._last_request = time.time()
 
     def search_recording(self, artist: str, title: str, limit: int = 5) -> list[dict]:
-        """Search for a recording by artist and title.
+        """
+        Search MusicBrainz for a recording that matches the given artist and title.
 
-        Returns:
-            List of recording dicts from MusicBrainz.
+        Returns a list of raw result dictionaries from the MusicBrainz API.
+        Each dict contains the title, any aliases, and other metadata.
         """
         self._rate_limit()
         query = f'artist:"{artist}" AND recording:"{title}"'
@@ -62,7 +101,7 @@ class MusicBrainzClient:
             "query": query,
             "fmt": "json",
             "limit": limit,
-            "inc": "aliases",
+            "inc": "aliases",  # Also fetch alternative title spellings
         }
         try:
             resp = self._client.get(
@@ -77,35 +116,33 @@ class MusicBrainzClient:
             raise RuntimeError(f"MusicBrainz search failed: {e}") from e
 
     def find_original_title(self, artist: str, title: str) -> Optional[Correction]:
-        """Search MusicBrainz for a track's original-language title.
+        """
+        Given a romanized or translated title, search MusicBrainz for the
+        original-script version (e.g. kanji/kana for Japanese songs).
 
         Strategy:
-        1. Search for the recording by artist + title
-        2. Check if the recording has an alias or different title
-           in a non-Latin script
-        3. Return the original title if found
+          1. Search for the recording by artist + title.
+          2. Check if MusicBrainz's primary title for the top result is
+             different from ours AND contains non-Latin characters.
+             If so, that's the original-script title we want.
+          3. If the primary title is the same, check the "aliases" list
+             (alternative spellings) for a non-Latin version.
 
-        Args:
-            artist: Current artist name.
-            title: Current romanized/translated title.
-
-        Returns:
-            Correction if a better title is found, or None.
+        Returns a Correction if a better title is found, or None.
         """
         recordings = self.search_recording(artist, title)
         if not recordings:
             return None
 
-        # Look at the top result
-        rec = recordings[0]
+        rec = recordings[0]  # Use the top (most relevant) search result
         mb_title = rec.get("title", "")
 
-        # If MusicBrainz already has a different (non-ASCII) title, use it
+        # If MusicBrainz stores a different title with non-Latin characters → use it
         if mb_title and mb_title.lower() != title.lower():
             has_non_ascii = any(ord(c) > 127 for c in mb_title)
             if has_non_ascii:
                 return Correction(
-                    track_id=0,  # Will be set by caller
+                    track_id=0,  # Will be filled in by the caller
                     field="name",
                     original_value=title,
                     corrected_value=mb_title,
@@ -113,7 +150,7 @@ class MusicBrainzClient:
                     confidence=0.8,
                 )
 
-        # Check if there are aliases (alternative spellings)
+        # Check the aliases (alternative spellings stored by contributors)
         aliases = rec.get("aliases", [])
         for alias in aliases:
             alias_name = alias.get("name", "")
@@ -130,19 +167,16 @@ class MusicBrainzClient:
         return None
 
     def find_original_english_title(self, artist: str, title: str) -> Optional[Correction]:
-        """Reverse lookup: given a Japanese-kana title, find the original English title.
+        """
+        Reverse lookup: given a japanized title (kana/kanji), find the original
+        English title for a Western artist.
 
         Strategy:
-        1. Search MusicBrainz for the recording by artist (Latin) + Japanese title
-        2. Look for the primary title if it's in Latin script (different from the search term)
-        3. Check aliases for Latin-script alternatives
+          1. Search MusicBrainz for the recording using the Japanese title.
+          2. Look through the results for a primary title that is in Latin script.
+          3. If the primary title is also Japanese, check aliases for a Latin version.
 
-        Args:
-            artist: Artist name (in Latin script, e.g. "Taylor Swift").
-            title: Japanized title (e.g. "シェイク・イット・オフ").
-
-        Returns:
-            Correction with the original Latin/English title, or None.
+        Returns a Correction with the original English title, or None.
         """
         recordings = self.search_recording(artist, title)
         if not recordings:
@@ -152,10 +186,9 @@ class MusicBrainzClient:
             mb_title = rec.get("title", "")
             if not mb_title:
                 continue
-            # Check if the MB title is in Latin script (original English)
-            is_latin = is_ascii_or_latin(mb_title)
-
-            if is_latin and mb_title.lower() != title.lower():
+            # If the MusicBrainz title is in Latin script and different from our input,
+            # it's the original English title
+            if is_ascii_or_latin(mb_title) and mb_title.lower() != title.lower():
                 return Correction(
                     track_id=0,
                     field="name",
@@ -164,7 +197,7 @@ class MusicBrainzClient:
                     source="musicbrainz",
                     confidence=0.8,
                 )
-            # Also check aliases
+            # Also check aliases for a Latin-script alternative
             aliases = rec.get("aliases", [])
             for alias in aliases:
                 alias_name = alias.get("name", "")
@@ -187,16 +220,28 @@ class MusicBrainzClient:
 
 
 class iTunesClient:
-    """Client for the iTunes Store Search API.
+    """
+    Queries the iTunes Store Search API for original-language titles.
 
-    The iTunes API returns localized metadata. Searching a Japanese storefront
-    (country=JP) will return Japanese titles when available.
+    The iTunes Store exists in many regional versions (storefronts). When you
+    search the Japanese storefront (country=JP), Apple returns Japanese titles.
+    When you search the US storefront (country=US), you get English titles.
+    We exploit this to find the original title for a track.
+
+    Forward lookup (romanized → original):
+      Search the CJK storefronts (JP, KR, CN, HK, TW) and return the first
+      result whose title contains non-Latin characters.
+
+    Reverse lookup (japanized → English):
+      Two-step process:
+        Step 1 — Search the JP store by artist name to find the track and
+                  get its iTunes track ID (a number that's the same in all stores).
+        Step 2 — Look up that track ID in the US store to get the English title.
     """
 
     BASE_URL = "https://itunes.apple.com/search"
     LOOKUP_URL = "https://itunes.apple.com/lookup"
 
-    # Country codes for CJK storefronts
     CJK_COUNTRIES = ["JP", "KR", "CN", "HK", "TW", "TH"]
 
     def __init__(self):
@@ -205,15 +250,12 @@ class iTunesClient:
         })
 
     def search(self, term: str, country: str = "US", limit: int = 5) -> list[dict]:
-        """Search iTunes Store for a track.
+        """
+        Search a specific iTunes Store regional storefront for a track.
 
-        Args:
-            term: Search term (artist + title).
-            country: Two-letter country code (e.g., 'JP', 'KR', 'US').
-            limit: Max results.
-
-        Returns:
-            List of result dicts.
+        country is a two-letter country code: 'JP' for Japan, 'KR' for Korea,
+        'US' for the United States, etc.
+        Returns a list of result dictionaries from the iTunes API.
         """
         params = {
             "term": term,
@@ -233,23 +275,17 @@ class iTunesClient:
     def find_original_title(
         self, artist: str, title: str, target_langs: list[str] | None = None
     ) -> Optional[Correction]:
-        """Search CJK storefronts for a track's original title.
+        """
+        Search CJK regional storefronts to find the original-script title.
 
-        Searches Japanese, Korean, Chinese (HK/TW) storefronts for
-        matching tracks with original-language titles.
-
-        Args:
-            artist: Current artist name.
-            title: Current romanized/translated title.
-            target_langs: List of target language codes.
-
-        Returns:
-            Correction if found, or None.
+        Searches the Japanese, Korean, and Chinese iTunes stores in order.
+        Returns the first result whose title contains non-Latin characters,
+        which is likely the original-language version of the track.
         """
         if target_langs is None:
             target_langs = ["ja", "zh", "ko"]
 
-        # Map languages to iTunes storefronts
+        # Each language maps to one or more iTunes country codes
         lang_country_map = {
             "ja":   ["JP"],
             "ko":   ["KR"],
@@ -267,11 +303,8 @@ class iTunesClient:
                     track_name = result.get("trackName", "")
                     if not track_name:
                         continue
-
-                    # Check if this title has non-ASCII characters
-                    # (original script vs romanized)
+                    # If the result title has non-ASCII characters, it's in the original script
                     has_script = any(ord(c) > 127 for c in track_name)
-
                     if has_script:
                         return Correction(
                             track_id=0,
@@ -285,50 +318,56 @@ class iTunesClient:
         return None
 
     def find_original_english_title(self, artist: str, title: str) -> Optional[Correction]:
-        """Reverse lookup: given a Japanized title, find the original English title via iTunes.
-
-        Strategy:
-        1. Search JP store by artist name (Latin script) to find the track
-        2. Match it against our Japanized title
-        3. Lookup the same trackId in the US store to get the English title
-
-        Args:
-            artist: Artist name in Latin script.
-            title: Japanized track title (katakana/hiragana/CJK).
-
-        Returns:
-            Correction with the original English title, or None.
         """
-        URL_LOOKUP = "https://itunes.apple.com/lookup"
+        Reverse lookup: given a japanized title, find the original English title.
 
-        # Step 1: Search JP store by artist to find matching tracks
+        This is a two-step process that exploits the fact that every song in the
+        iTunes Store has a single numeric ID that is the same across all storefronts:
+
+          Step 1 — Search the JP store by artist name (using Latin letters).
+                   Scan the results for a track whose Japanese title matches ours.
+                   Record that track's iTunes ID.
+
+          Step 2 — Ask the US store: "what is track #[ID] called?"
+                   The US store returns the English title.
+
+        The title matching in Step 1 is fuzzy — we strip spaces, punctuation,
+        and normalize unicode so that e.g. "シェイク・イット・オフ" and
+        "シェイクイットオフ" are treated as the same.
+        """
+        # Step 1: Search JP store by artist name to get candidate tracks
         results = self.search(artist, country="JP", limit=25)
         if not results:
             return None
 
-        # Step 2: Find the track with a Japanese title matching our input
-        # Normalize both titles: remove spaces, normalize unicode width
         def normalize(s: str) -> str:
-            s = s.replace(" ", "").replace("　", "")
-            s = s.replace("・", "").replace("·", "").replace(".", "")
-            s = s.replace("-", "").replace("—", "").replace("–", "")
-            s = s.replace("'", "").replace("`", "").replace("ʻ", "")
+            """
+            Normalize a title for fuzzy comparison.
+            Strips spaces, punctuation, and normalizes unicode width variations
+            (e.g. full-width vs half-width katakana) so minor formatting
+            differences don't prevent a match.
+            """
+            s = s.replace(" ", "").replace("　", "")       # Remove spaces (including full-width)
+            s = s.replace("・", "").replace("·", "").replace(".", "")  # Remove middle dots
+            s = s.replace("-", "").replace("—", "").replace("–", "")  # Remove dashes
+            s = s.replace("'", "").replace("`", "").replace("ʻ", "")  # Remove apostrophes
             s = s.lower()
-            return unicodedata.normalize("NFKC", s)
+            return unicodedata.normalize("NFKC", s)  # Normalize unicode (e.g. ｶ → カ)
 
         target_norm = normalize(title)
         matched_track = None
 
+        # Find the JP result whose title matches our japanized title
         for result in results:
             track_name = result.get("trackName", "")
             artist_name = result.get("artistName", "")
 
-            # Artist should match
+            # Confirm the artist matches (partial match in either direction is OK)
             if artist.lower() not in artist_name.lower() and artist_name.lower() not in artist.lower():
                 continue
 
             track_norm = normalize(track_name)
-            # Check if the JP store title contains/is-contained by our target
+            # Accept if one title contains the other (handles truncation differences)
             if target_norm in track_norm or track_norm in target_norm:
                 matched_track = result
                 break
@@ -336,10 +375,11 @@ class iTunesClient:
         if not matched_track:
             return None
 
+        # Step 2: Use the track's iTunes ID to look up the English title in the US store
         track_id = matched_track.get("trackId")
         if not track_id:
             return None
-        # Step 3: Lookup the same track in US store to get English title
+
         try:
             resp = self._client.get(
                 self.LOOKUP_URL,

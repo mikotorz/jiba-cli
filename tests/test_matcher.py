@@ -90,6 +90,64 @@ class TestMusicBrainzClient:
         assert correction.corrected_value == "ロケット"
 
 
+class TestMusicBrainzReverse:
+    @respx.mock
+    def test_find_original_english_title_found(self):
+        """Should return a Latin-script title when MusicBrainz primary title is English."""
+        respx.get("https://musicbrainz.org/ws/2/recording/").respond(
+            200,
+            json={
+                "recordings": [
+                    {
+                        "id": "xyz-789",
+                        "title": "Shake It Off",
+                        "artist-credit": [{"name": "Taylor Swift"}],
+                        "aliases": [],
+                    }
+                ]
+            },
+        )
+
+        client = MusicBrainzClient()
+        correction = client.find_original_english_title("Taylor Swift", "シェイク・イット・オフ")
+        assert correction is not None
+        assert correction.corrected_value == "Shake It Off"
+        assert correction.source == "musicbrainz"
+
+    @respx.mock
+    def test_find_original_english_title_via_alias(self):
+        """Should fall back to aliases for the Latin-script title."""
+        respx.get("https://musicbrainz.org/ws/2/recording/").respond(
+            200,
+            json={
+                "recordings": [
+                    {
+                        "id": "xyz-789",
+                        "title": "シェイク・イット・オフ",
+                        "artist-credit": [{"name": "Taylor Swift"}],
+                        "aliases": [{"name": "Shake It Off"}],
+                    }
+                ]
+            },
+        )
+
+        client = MusicBrainzClient()
+        correction = client.find_original_english_title("Taylor Swift", "シェイク・イット・オフ")
+        assert correction is not None
+        assert correction.corrected_value == "Shake It Off"
+
+    @respx.mock
+    def test_find_original_english_title_not_found(self):
+        """Should return None when no recordings are found."""
+        respx.get("https://musicbrainz.org/ws/2/recording/").respond(
+            200, json={"recordings": []}
+        )
+
+        client = MusicBrainzClient()
+        correction = client.find_original_english_title("Taylor Swift", "シェイク・イット・オフ")
+        assert correction is None
+
+
 class TestiTunesClient:
     @respx.mock
     def test_search_japanese_store(self):
@@ -147,4 +205,50 @@ class TestiTunesClient:
         correction = client.find_original_title(
             "English Band", "English Song", target_langs=["ja"]
         )
+        assert correction is None
+
+    @respx.mock
+    def test_find_original_english_title_two_step(self):
+        """Two-step lookup: JP store finds track ID, US store returns English title."""
+        # Step 1: JP store search returns a track with the japanized title and a track ID
+        respx.get("https://itunes.apple.com/search").respond(
+            200,
+            json={
+                "resultCount": 1,
+                "results": [{
+                    "trackId": 999,
+                    "trackName": "シェイク・イット・オフ",
+                    "artistName": "Taylor Swift",
+                }],
+            },
+        )
+        # Step 2: US store lookup by track ID returns the English title
+        respx.get("https://itunes.apple.com/lookup").respond(
+            200,
+            json={
+                "resultCount": 1,
+                "results": [{
+                    "trackId": 999,
+                    "trackName": "Shake It Off",
+                    "artistName": "Taylor Swift",
+                }],
+            },
+        )
+
+        client = iTunesClient()
+        correction = client.find_original_english_title("Taylor Swift", "シェイク・イット・オフ")
+        assert correction is not None
+        assert correction.corrected_value == "Shake It Off"
+        assert correction.source == "itunes_us"
+        assert correction.original_value == "シェイク・イット・オフ"
+
+    @respx.mock
+    def test_find_original_english_title_no_jp_match(self):
+        """Should return None if JP store has no results for the artist."""
+        respx.get("https://itunes.apple.com/search").respond(
+            200, json={"resultCount": 0, "results": []}
+        )
+
+        client = iTunesClient()
+        correction = client.find_original_english_title("Unknown Artist", "カタカナ")
         assert correction is None
