@@ -24,3 +24,17 @@ For hard tasks: plan with Opus (with approval), then execute each phase with Son
 - Include appropriate tests
 - Use type hints where applicable
 - Keep functions focused and modular
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues (github.com/mikotorz/jiba-cli). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Uses the five canonical default label names. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context repo — one `CONTEXT.md` + `docs/adr/` at the root. See `docs/agents/domain.md`.
